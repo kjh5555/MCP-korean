@@ -1,9 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { getMCPById } from '@/lib/data';
 import { MCP, SmitheryMCP } from '@/lib/types';
 import { 
   ArrowLeft, 
@@ -22,6 +21,14 @@ import { notFound } from 'next/navigation';
 import { fetchMCPServerDetail } from '@/lib/api';
 
 export default function MCPDetailPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <MCPDetailContent />
+    </Suspense>
+  );
+}
+
+function MCPDetailContent() {
   const searchParams = useSearchParams();
   const id = searchParams.get('id');
   
@@ -34,81 +41,38 @@ export default function MCPDetailPage() {
   const isSmitheryMCP = mcp && 'qualifiedName' in mcp;
 
   // MCP 데이터 로드 함수 - API를 통한 스크래핑으로 변경
-  const loadMCPData = async () => {
+  const loadMCPData = useCallback(async () => {
     if (!id) {
       setError('MCP ID가 제공되지 않았습니다.');
-      setIsLoading(false);
       return;
     }
 
-    setIsLoading(true);
-    setError(null);
-    
     try {
-      console.log('상세 페이지 데이터 로드 시작:', id);
-      
-      // 먼저 로컬 캐시 확인 (선택 사항)
-      const cachedData = localStorage.getItem(`mcp-cache-${id}`);
-      if (cachedData) {
-        try {
-          const parsedCache = JSON.parse(cachedData);
-          // 캐시가 24시간 이내인 경우에만 사용
-          if (parsedCache.timestamp && Date.now() - parsedCache.timestamp < 24 * 60 * 60 * 1000) {
-            console.log('캐시된 데이터 사용:', id);
-            setMcp(parsedCache.data);
-            setIsLoading(false);
-            return;
-          }
-        } catch (e) {
-          console.warn('캐시 파싱 오류:', e);
-        }
-      }
-      
+      setIsLoading(true);
+      setError(null);
+
       // API 함수를 사용하여 데이터 가져오기
       console.log('API 함수를 통해 데이터 가져오기 시작:', id);
-      const mcpData = await fetchMCPServerDetail(id, showTranslation);
+      const mcpData = await fetchMCPServerDetail(id);
       
       if (mcpData) {
         console.log('API 응답 성공:', mcpData);
-        
-        // 캐싱 (선택 사항)
-        try {
-          localStorage.setItem(`mcp-cache-${id}`, JSON.stringify({
-            data: mcpData,
-            timestamp: Date.now()
-          }));
-        } catch (e) {
-          console.warn('캐싱 오류:', e);
-        }
-        
         setMcp(mcpData);
       } else {
-        // API 응답이 없는 경우
-        throw new Error('MCP 서버 정보를 가져오지 못했습니다');
+        setError('MCP 서버를 찾을 수 없습니다.');
       }
-    } catch (err) {
-      console.error('MCP 정보를 가져오는 중 오류 발생:', err);
-      const errorMessage = err instanceof Error ? err.message : '알 수 없는 오류';
-      setError(`MCP 정보를 가져오는 중 오류가 발생했습니다: ${errorMessage}`);
-      
-      // 오류 발생 시 로컬 데이터에서 찾기
-      if (id) {
-        const localMCP = getMCPById(id);
-        
-        if (localMCP) {
-          setMcp(localMCP);
-          setError(null);
-        }
-      }
+    } catch (error) {
+      console.error('API 호출 중 오류 발생:', error);
+      setError('데이터를 불러오는 중 오류가 발생했습니다.');
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [id]);
 
   // 데이터 로드 및 번역 토글 시 데이터 다시 로드
   useEffect(() => {
     loadMCPData();
-  }, [id, showTranslation]);
+  }, [loadMCPData]);
 
   if (isLoading) {
     return (
