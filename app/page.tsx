@@ -1,351 +1,215 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { mcpData, filterMCPs } from '@/lib/data';
-
-// api 가져오기 방식 변경 - named imports 사용
-import { fetchMCPServers, mcpCategories, fetchMCPServersByCategory } from '@/lib/api';
-
-import { MCPFilterOptions, SmitheryMCP, PaginationOptions } from '@/lib/types';
-import { MCPSearch } from '@/components/MCPSearch';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { fetchMCPServers } from '@/lib/api';
+import { SmitheryMCP } from '@/lib/types';
 import { MCPCard } from '@/components/MCPCard';
-import { Database, Server, Network, Shield, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { Search, Loader2 } from 'lucide-react';
+import { mcpCategories } from '@/lib/api';
 
 export default function Home() {
-  // 모드 상태 (로컬 데이터 또는 Smithery API)
-  const [useSmitheryAPI, setUseSmitheryAPI] = useState(true);
-
-  // 로컬 데이터 상태
-  const [filteredLocalMCPs, setFilteredLocalMCPs] = useState(mcpData);
-  const [currentFilters, setCurrentFilters] = useState<MCPFilterOptions>({});
-
-  // Smithery API 데이터 상태
-  const [smitheryMCPs, setSmitheryMCPs] = useState<SmitheryMCP[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [mcpServers, setMcpServers] = useState<SmitheryMCP[]>([]);
+  const [filteredServers, setFilteredServers] = useState<SmitheryMCP[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pagination, setPagination] = useState<PaginationOptions>({
-    page: 1,
-    pageSize: 12,
-    totalPages: 1,
-    totalCount: 0
-  });
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const observerTarget = useRef<HTMLDivElement>(null);
 
-  // 카테고리 필터링 상태
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-
-  // 번역 상태
-  const [showTranslation, setShowTranslation] = useState(true);
-
-  // 컴포넌트 마운트 시 Smithery API 데이터 로드
-  useEffect(() => {
-    if (useSmitheryAPI) {
-      loadSmitheryData();
-    }
-  }, [useSmitheryAPI, pagination.page, selectedCategory, showTranslation]);
-
-  // Smithery API 데이터 로드 함수
-  const loadSmitheryData = async () => {
-    setIsLoading(true);
-    setError(null);
-    
+  const loadSmitheryData = useCallback(async (page: number = 1) => {
     try {
-      let result;
-      
-      if (selectedCategory) {
-        result = await fetchMCPServersByCategory(
-          selectedCategory,
-          pagination.page,
-          pagination.pageSize,
-          showTranslation
-        );
+      if (page === 1) {
+        setIsLoading(true);
       } else {
-        result = await fetchMCPServers(pagination.page, pagination.pageSize, showTranslation);
+        setIsLoadingMore(true);
       }
+
+      const { servers, pagination } = await fetchMCPServers(page);
       
-      setSmitheryMCPs(result.servers);
-      setPagination(result.pagination);
-    } catch (err) {
-      setError('MCP 서버 데이터를 가져오는 중 오류가 발생했습니다.');
-      console.error('API 호출 에러:', err);
+      if (page === 1) {
+        setMcpServers(servers);
+        setFilteredServers(servers);
+      } else {
+        setMcpServers(prev => [...prev, ...servers]);
+        setFilteredServers(prev => [...prev, ...servers]);
+      }
+
+      setHasMore(page < pagination.totalPages);
+    } catch (error) {
+      console.error('Error loading Smithery data:', error);
+      setError('데이터를 불러오는 중 오류가 발생했습니다.');
     } finally {
       setIsLoading(false);
+      setIsLoadingMore(false);
     }
-  };
+  }, []);
 
-  // 로컬 데이터 검색 처리
-  const handleLocalSearch = (filters: MCPFilterOptions) => {
-    setCurrentFilters(filters);
-    const results = filterMCPs(
-      filters.search,
-      filters.role,
-      filters.feature
+  // 초기 데이터 로드
+  useEffect(() => {
+    loadSmitheryData(1);
+  }, [loadSmitheryData]);
+
+  // Intersection Observer 설정
+  useEffect(() => {
+    if (!observerTarget.current || isLoading || isLoadingMore || !hasMore) return;
+
+    const observer = new IntersectionObserver(
+      entries => {
+        if (entries[0].isIntersecting) {
+          setCurrentPage(prev => {
+            const nextPage = prev + 1;
+            loadSmitheryData(nextPage);
+            return nextPage;
+          });
+        }
+      },
+      { threshold: 1.0 }
     );
-    setFilteredLocalMCPs(results);
-  };
 
-  // 카테고리 선택 처리
-  const handleCategorySelect = (categoryId: string | null) => {
-    setSelectedCategory(categoryId);
-    // 페이지를 1로 초기화
-    setPagination(prev => ({ ...prev, page: 1 }));
-  };
+    observer.observe(observerTarget.current);
 
-  // 페이지 변경 처리
-  const handlePageChange = (newPage: number) => {
-    if (newPage <= 0 || newPage > pagination.totalPages) return;
+    return () => observer.disconnect();
+  }, [isLoading, isLoadingMore, hasMore, loadSmitheryData]);
+
+  // 검색어와 카테고리에 따라 서버 필터링
+  useEffect(() => {
+    let filtered = mcpServers;
     
-    setPagination(prev => ({
-      ...prev,
-      page: newPage
-    }));
-  };
-
-  // API 모드 토글
-  const toggleAPIMode = () => {
-    setUseSmitheryAPI(!useSmitheryAPI);
-  };
-
-  // 데이터 표시
-  const renderContent = () => {
-    if (useSmitheryAPI) {
-      if (isLoading) {
-        return (
-          <div className="flex justify-center items-center py-20">
-            <div className="animate-spin h-8 w-8 border-4 border-blue-500 rounded-full border-t-transparent"></div>
-          </div>
-        );
-      }
-
-      if (error) {
-        return (
-          <div className="text-center py-12 bg-white rounded-lg shadow-sm">
-            <p className="text-red-500 mb-4">{error}</p>
-            <button 
-              onClick={loadSmitheryData} 
-              className="text-blue-600 hover:underline"
-            >
-              다시 시도하기
-            </button>
-          </div>
-        );
-      }
-
-      if (smitheryMCPs.length === 0) {
-        return (
-          <div className="text-center py-12 bg-white rounded-lg shadow-sm">
-            <p className="text-gray-500 mb-4">
-              {selectedCategory 
-                ? '선택한 카테고리에 대한 MCP 서버가 없습니다.' 
-                : 'MCP 서버 데이터가 없습니다.'}
-            </p>
-            <button 
-              onClick={() => handleCategorySelect(null)} 
-              className="text-blue-600 hover:underline"
-            >
-              모든 MCP 서버 보기
-            </button>
-          </div>
-        );
-      }
-
-      return (
-        <>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {smitheryMCPs.map(mcp => (
-              <MCPCard key={mcp.id} mcp={mcp} showRealLink={true} />
-            ))}
-          </div>
-          
-          {/* 페이지네이션 */}
-          <div className="mt-8 flex justify-center">
-            <div className="flex items-center space-x-2">
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={() => handlePageChange(pagination.page - 1)}
-                disabled={pagination.page <= 1}
-              >
-                <ChevronLeft className="h-4 w-4" />
-                이전
-              </Button>
-              
-              <span className="text-sm">
-                페이지 {pagination.page} / {pagination.totalPages}
-                {pagination.totalCount > 0 && ` (총 ${pagination.totalCount}개)`}
-              </span>
-              
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={() => handlePageChange(pagination.page + 1)}
-                disabled={pagination.page >= pagination.totalPages}
-              >
-                다음
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-        </>
+    // 검색어로 필터링
+    if (searchTerm) {
+      filtered = filtered.filter(server => 
+        server.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        server.description.toLowerCase().includes(searchTerm.toLowerCase())
       );
-    } else {
-      // 로컬 데이터 표시
-      if (filteredLocalMCPs.length > 0) {
-        return (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredLocalMCPs.map(mcp => (
-              <MCPCard key={mcp.id} mcp={mcp} />
-            ))}
-          </div>
-        );
-      } else {
-        return (
-          <div className="text-center py-12 bg-white rounded-lg shadow-sm">
-            <p className="text-gray-500 mb-4">검색 조건에 맞는 MCP 결과가 없습니다.</p>
-            <button 
-              onClick={() => handleLocalSearch({})} 
-              className="text-blue-600 hover:underline"
-            >
-              모든 MCP 보기
-            </button>
-          </div>
-        );
-      }
     }
-  };
+    
+    // 카테고리로 필터링
+    if (selectedCategory !== 'all') {
+      filtered = filtered.filter(server => 
+        server.roles.some(role => role.id === selectedCategory)
+      );
+    }
+    
+    setFilteredServers(filtered);
+  }, [searchTerm, selectedCategory, mcpServers]);
+
+  // 검색어나 카테고리가 변경될 때 페이지 초기화
+  useEffect(() => {
+    setCurrentPage(1);
+    loadSmitheryData(1);
+  }, [searchTerm, selectedCategory]);
 
   return (
-    <main className="min-h-screen bg-slate-50">
-      <header className="bg-gradient-to-br from-blue-900 to-indigo-800 text-white py-16 px-4">
-        <div className="container mx-auto max-w-6xl">
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4">
-            <h1 className="text-4xl md:text-5xl font-bold mb-2 md:mb-0">
-              MCP 검색
-            </h1>
-            
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-2">
-                <label htmlFor="translate-toggle" className="text-sm text-white">
-                  한글 번역
-                </label>
-                <button
-                  id="translate-toggle"
-                  className={`w-12 h-6 rounded-full p-1 transition-colors duration-300 ease-in-out ${showTranslation ? 'bg-white' : 'bg-white/30'}`}
-                  onClick={() => setShowTranslation(!showTranslation)}
-                >
-                  <div
-                    className={`w-4 h-4 rounded-full bg-blue-900 transform transition-transform duration-300 ease-in-out ${
-                      showTranslation ? 'translate-x-6' : 'translate-x-0'
-                    }`}
-                  />
-                </button>
-              </div>
-              <Button 
-                variant="outline" 
-                onClick={toggleAPIMode} 
-                className="text-white border-white hover:bg-white/20"
-              >
-                {useSmitheryAPI ? '로컬 데이터 사용' : 'Smithery API 사용'}
-              </Button>
-            </div>
-          </div>
-          
-          <p className="text-xl opacity-90 max-w-3xl mb-8">
-            {useSmitheryAPI 
-              ? 'Smithery.ai의 MCP 서버 정보를 검색하고 각 서버의 역할과 기능에 대해 알아보세요. 다양한 AI 통합 서버를 쉽게 찾고 이해할 수 있습니다.' 
-              : 'MCP 정보를 검색하고 각 프로토콜의 역할과 기능에 대해 알아보세요. 다양한 환경에서 동작하는 프로토콜을 쉽게 찾고 이해할 수 있습니다.'}
+    <div className="min-h-screen bg-gray-50">
+      {/* 헤더 섹션 */}
+      <div className="bg-white border-b">
+        <div className="container mx-auto px-4 py-8">
+          <h1 className="text-4xl font-bold mb-4">MCP 서버 목록</h1>
+          <p className="text-xl text-gray-600 mb-8 max-w-3xl">
+            Model Context Protocol (MCP) 서버들의 목록입니다. 
+            각 서버는 AI 모델과의 상호작용을 위한 특별한 기능을 제공합니다.
           </p>
-          
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-            <div className="flex items-center p-3 bg-white/10 backdrop-blur-sm rounded-lg">
-              <Database className="h-6 w-6 mr-3 text-blue-300" />
-              <span className="text-sm">데이터 교환</span>
-            </div>
-            <div className="flex items-center p-3 bg-white/10 backdrop-blur-sm rounded-lg">
-              <Server className="h-6 w-6 mr-3 text-blue-300" />
-              <span className="text-sm">시스템 통합</span>
-            </div>
-            <div className="flex items-center p-3 bg-white/10 backdrop-blur-sm rounded-lg">
-              <Network className="h-6 w-6 mr-3 text-blue-300" />
-              <span className="text-sm">통신 프로토콜</span>
-            </div>
-            <div className="flex items-center p-3 bg-white/10 backdrop-blur-sm rounded-lg">
-              <Shield className="h-6 w-6 mr-3 text-blue-300" />
-              <span className="text-sm">보안</span>
+
+          {/* 검색 섹션 */}
+          <div className="flex gap-4 max-w-2xl">
+            <div className="flex-1 relative">
+              <Input
+                type="text"
+                placeholder="서버 이름 또는 설명으로 검색..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10 h-12 text-lg"
+              />
+              <Search className="absolute left-3 top-3.5 h-5 w-5 text-gray-400" />
             </div>
           </div>
         </div>
-      </header>
-      
-      <div className="container mx-auto max-w-6xl px-4 py-8">
-        {useSmitheryAPI ? (
-          /* Smithery API 카테고리 필터 */
-          <div className="mb-8">
-            <h2 className="text-xl font-bold mb-4">카테고리별 MCP 서버</h2>
-            <div className="flex flex-wrap gap-2">
-              <Button 
-                variant={selectedCategory === null ? "default" : "outline"} 
-                size="sm"
-                onClick={() => handleCategorySelect(null)}
+      </div>
+
+      <div className="container mx-auto px-4 py-8">
+        {/* 카테고리 필터 */}
+        <div className="mb-8">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant={selectedCategory === 'all' ? 'default' : 'outline'}
+              onClick={() => setSelectedCategory('all')}
+              className="h-10"
+            >
+              전체
+            </Button>
+            {mcpCategories.map((category) => (
+              <Button
+                key={category.id}
+                variant={selectedCategory === category.id ? 'default' : 'outline'}
+                onClick={() => setSelectedCategory(category.id)}
+                className="h-10"
               >
-                모든 서버
+                {category.name}
               </Button>
-              
-              {mcpCategories.map(category => (
-                <Button 
-                  key={category.id}
-                  variant={selectedCategory === category.id ? "default" : "outline"} 
-                  size="sm"
-                  onClick={() => handleCategorySelect(category.id)}
-                >
-                  {category.name}
-                </Button>
-              ))}
-            </div>
+            ))}
           </div>
-        ) : (
-          /* 로컬 데이터 검색 필터 */
-          <div className="mb-8">
-            <MCPSearch 
-              onSearch={handleLocalSearch} 
-              initialFilters={currentFilters} 
-            />
+        </div>
+
+        {/* 에러 메시지 */}
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6 text-red-700">
+            {error}
           </div>
         )}
         
-        <div className="mb-6 flex items-center justify-between">
-          <h2 className="text-2xl font-bold">
-            {useSmitheryAPI 
-              ? (selectedCategory 
-                ? `${mcpCategories.find(c => c.id === selectedCategory)?.name} (${pagination.totalCount})` 
-                : `MCP 서버 목록 (${pagination.totalCount})`)
-              : (filteredLocalMCPs.length > 0 
-                ? `검색 결과 (${filteredLocalMCPs.length})` 
-                : '검색 결과가 없습니다')}
-          </h2>
-          
-          {!useSmitheryAPI && Object.values(currentFilters).some(value => value) && (
-            <button 
-              onClick={() => handleLocalSearch({})} 
-              className="text-sm text-gray-500 hover:text-gray-700"
-            >
-              필터 초기화
-            </button>
-          )}
-          
-          {useSmitheryAPI && selectedCategory && (
-            <button 
-              onClick={() => handleCategorySelect(null)} 
-              className="text-sm text-gray-500 hover:text-gray-700 flex items-center"
-            >
-              <Filter className="h-4 w-4 mr-1" />
-              필터 초기화
-            </button>
-          )}
-        </div>
-        
-        {renderContent()}
+        {/* 로딩 상태 */}
+        {isLoading ? (
+          <div className="text-center py-12">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 mx-auto mb-4"></div>
+            <p className="text-xl text-gray-600">서버 목록을 불러오는 중...</p>
+          </div>
+        ) : (
+          <>
+            {/* 검색 결과 요약 */}
+            <div className="mb-6 text-lg text-gray-600">
+              총 {filteredServers.length}개의 서버가 있습니다
+              {searchTerm && ` (검색어: "${searchTerm}")`}
+              {selectedCategory !== 'all' && ` (카테고리: "${mcpCategories.find(c => c.id === selectedCategory)?.name}")`}
+            </div>
+
+            {/* 서버 목록 */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {filteredServers.map((mcp: SmitheryMCP) => (
+                <MCPCard key={mcp.id} mcp={mcp} />
+              ))}
+            </div>
+
+            {/* 무한 스크롤 로딩 인디케이터 */}
+            {!isLoading && hasMore && (
+              <div 
+                ref={observerTarget}
+                className="flex justify-center items-center py-8"
+              >
+                {isLoadingMore ? (
+                  <div className="flex items-center gap-2 text-gray-600">
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    <span>더 불러오는 중...</span>
+                  </div>
+                ) : (
+                  <div className="h-10" />
+                )}
+              </div>
+            )}
+
+            {/* 검색 결과가 없는 경우 */}
+            {filteredServers.length === 0 && (
+              <div className="text-center py-12 bg-gray-50 rounded-lg">
+                <p className="text-xl text-gray-500">검색 결과가 없습니다</p>
+              </div>
+            )}
+          </>
+        )}
       </div>
-    </main>
+    </div>
   );
 }

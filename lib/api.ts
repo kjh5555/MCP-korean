@@ -220,24 +220,15 @@ function convertToMCP(server: SmitheryMCPServer & { exampleCode?: string; featur
   };
 }
 
-// Smithery API에서 MCP 서버 목록을 가져오는 함수
-async function fetchMCPServers(
-  page: number = 1, 
-  pageSize: number = 20,
-  translate: boolean = true
-): Promise<{ servers: SmitheryMCP[], pagination: PaginationOptions }> {
+// MCP 서버 목록을 가져오는 함수
+export async function fetchMCPServers(page: number = 1, pageSize: number = 50): Promise<{ servers: SmitheryMCP[], pagination: PaginationOptions }> {
   try {
-    const response = await fetch(
-      `/api/mcp?page=${page}&pageSize=${pageSize}&translate=${translate}`
-    );
-
+    const response = await fetch(`/api/mcp?page=${page}&pageSize=${pageSize}`);
     if (!response.ok) {
-      throw new Error(`API 요청 실패: ${response.statusText}`);
+      throw new Error(`API request failed with status ${response.status}`);
     }
-
     const data: SmitheryAPIResponse = await response.json();
     const servers = data.servers.map(convertToMCP);
-    
     return {
       servers,
       pagination: {
@@ -248,47 +239,34 @@ async function fetchMCPServers(
       }
     };
   } catch (error) {
-    console.error('MCP 서버 목록을 가져오는 중 오류 발생:', error);
+    console.error('Error fetching MCP servers:', error);
     throw error;
   }
 }
 
 // 특정 MCP 서버의 상세 정보를 가져오는 함수
-async function fetchMCPServerDetail(
-  qualifiedName: string | null, 
-  translate: boolean = true
-): Promise<SmitheryMCP | null> {
-  if (!qualifiedName) return null;
-  
+export async function fetchMCPServerDetail(qualifiedName: string): Promise<SmitheryMCP | null> {
   try {
-    const response = await fetch(`/api/mcp?id=${encodeURIComponent(qualifiedName)}&translate=${translate}`);
-    
+    const response = await fetch(`/api/mcp?id=${encodeURIComponent(qualifiedName)}`);
     if (!response.ok) {
-      throw new Error(`API 요청 실패: ${response.statusText}`);
+      throw new Error(`API request failed with status ${response.status}`);
     }
-    
     const data = await response.json();
-    
-    if (!data.server) {
-      return null;
-    }
-    
-    return convertToMCP(data.server);
+    return data.server ? convertToMCP(data.server) : null;
   } catch (error) {
-    console.error('MCP 서버 상세 정보를 가져오는 중 오류 발생:', error);
-    throw error;
+    console.error('Error fetching MCP server detail:', error);
+    return null;
   }
 }
 
 // MCP 서버를 검색하는 함수
-async function searchMCPServers(
+export async function searchMCPServers(
   searchTerm: string,
   page: number = 1,
-  pageSize: number = 20,
-  translate: boolean = true
+  pageSize: number = 50
 ): Promise<{ servers: SmitheryMCP[], pagination: PaginationOptions }> {
   try {
-    const { servers, pagination } = await fetchMCPServers(page, pageSize, translate);
+    const { servers, pagination } = await fetchMCPServers(page, pageSize);
     
     if (!searchTerm) {
       return { servers, pagination };
@@ -308,25 +286,21 @@ async function searchMCPServers(
       }
     };
   } catch (error) {
-    console.error('MCP 서버 검색 중 오류 발생:', error);
+    console.error('Error searching MCP servers:', error);
     throw error;
   }
 }
 
 // 카테고리별 MCP 서버를 가져오는 함수
-async function fetchMCPServersByCategory(
+export async function fetchMCPServersByCategory(
   categoryId: string,
   page: number = 1,
-  pageSize: number = 20,
-  translate: boolean = true
+  pageSize: number = 50
 ): Promise<{ servers: SmitheryMCP[], pagination: PaginationOptions }> {
   try {
-    const response = await fetch(
-      `/api/mcp?page=${page}&pageSize=${pageSize}&category=${categoryId}&translate=${translate}`
-    );
-    
+    const response = await fetch(`/api/mcp?page=${page}&pageSize=${pageSize}&category=${categoryId}`);
     if (!response.ok) {
-      throw new Error(`API 요청 실패: ${response.statusText}`);
+      throw new Error(`API request failed with status ${response.status}`);
     }
     
     const data: SmitheryAPIResponse = await response.json();
@@ -348,7 +322,7 @@ async function fetchMCPServersByCategory(
       const keywords = keywordMap[categoryId] || [];
       
       if (keywords.length > 0) {
-        servers = servers.filter(server => 
+        servers = servers.filter((server: SmitheryMCP) => 
           keywords.some(keyword => 
             server.name.toLowerCase().includes(keyword.toLowerCase()) ||
             server.description.toLowerCase().includes(keyword.toLowerCase())
@@ -371,16 +345,11 @@ async function fetchMCPServersByCategory(
       }
     };
   } catch (error) {
-    console.error('카테고리별 MCP 서버를 가져오는 중 오류 발생:', error);
+    console.error('Error fetching MCP servers by category:', error);
     throw error;
   }
 }
 
-// Named exports로 변경
 export {
-  mcpCategories,
-  fetchMCPServers,
-  fetchMCPServerDetail,
-  searchMCPServers,
-  fetchMCPServersByCategory
+  mcpCategories
 }; 
