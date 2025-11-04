@@ -31,12 +31,28 @@ export default function Home() {
 
       const { servers, pagination } = await fetchMCPServers(page);
       
+      // 중복 제거: qualifiedName을 기준으로 중복 제거
+      const uniqueServers = servers.filter((server, index, self) => 
+        index === self.findIndex(s => s.qualifiedName === server.qualifiedName)
+      );
+      
       if (page === 1) {
-        setMcpServers(servers);
-        setFilteredServers(servers);
+        setMcpServers(uniqueServers);
+        setFilteredServers(uniqueServers);
       } else {
-        setMcpServers(prev => [...prev, ...servers]);
-        setFilteredServers(prev => [...prev, ...servers]);
+        setMcpServers(prev => {
+          // 기존 서버와 새 서버를 합치되 중복 제거
+          const combined = [...prev, ...uniqueServers];
+          return combined.filter((server, index, self) => 
+            index === self.findIndex(s => s.qualifiedName === server.qualifiedName)
+          );
+        });
+        setFilteredServers(prev => {
+          const combined = [...prev, ...uniqueServers];
+          return combined.filter((server, index, self) => 
+            index === self.findIndex(s => s.qualifiedName === server.qualifiedName)
+          );
+        });
       }
 
       setHasMore(page < pagination.totalPages);
@@ -179,8 +195,8 @@ export default function Home() {
 
             {/* 서버 목록 */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {filteredServers.map((mcp: SmitheryMCP) => (
-                <MCPCard key={mcp.id} mcp={mcp} />
+              {filteredServers.map((mcp: SmitheryMCP, index: number) => (
+                <MCPCard key={`${mcp.qualifiedName}-${index}`} mcp={mcp} />
               ))}
             </div>
 
